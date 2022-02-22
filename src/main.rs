@@ -19,6 +19,7 @@ fn read_from_file_to(
     pipe: pipe::Pipe,
     tx: channel::Tx,
     terminate: Arc<AtomicBool>,
+    limit: Option<usize>,
 ) -> Result<()> {
     let rd_handle: thread::JoinHandle<anyhow::Result<pipe::Stats>> = thread::Builder::new()
         .name("pcap-reader".to_string())
@@ -26,7 +27,13 @@ fn read_from_file_to(
             let mut stats = Default::default();
             loop {
                 let inp = input::pcap_file(&fname)?;
-                stats = pipe::read_packets_to(inp.packets(), &tx, stats, Arc::clone(&terminate))?;
+                let it = match limit {
+                    Some(n) => {
+                        Box::new(inp.packets().take(n)) as Box<dyn Iterator<Item = input::Packet>>
+                    }
+                    None => Box::new(inp.packets()),
+                };
+                stats = pipe::read_packets_to(it, &tx, stats, Arc::clone(&terminate))?;
                 if !loop_file || terminate.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
@@ -92,6 +99,11 @@ fn main() {
                 .validator(|v| v.parse::<f32>())
                 .required(false),
         )
+        .arg(
+            clap::arg!(-c --count <VALUE> "Send up to <VALUE> packets from the file")
+                .validator(|v| v.parse::<usize>())
+                .required(false),
+        )
         .get_matches();
 
     let loop_file = matches.is_present("loop");
@@ -130,6 +142,11 @@ fn main() {
         error!("packet buffer low watermark can not be larger than hi");
         return;
     }
+    let limit = if matches.is_present("count") {
+        Some(matches.value_of_t::<usize>("count").unwrap())
+    } else {
+        None
+    };
 
     let terminate = Arc::new(AtomicBool::from(false));
     if let Err(e) = flag::register(SIGINT, Arc::clone(&terminate)) {
@@ -145,7 +162,7 @@ fn main() {
     };
     match p {
         Ok(pipe) => {
-            if let Err(e) = read_from_file_to(fname, loop_file, pipe, tx, terminate) {
+            if let Err(e) = read_from_file_to(fname, loop_file, pipe, tx, terminate, limit) {
                 error!("Error while processing packets: {}", e);
             }
         }
