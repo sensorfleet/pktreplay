@@ -22,6 +22,8 @@ Following command line options are available:
 - `-l` or `--loop`: Loop packets from file, that is start writing packets again
   from the beginning once all packets are written. Program terminates when user
   presses ctrl+c.
+- `-c` or `--count <NUM>`: Read only NUM first packets from the file and output
+  them. If `--loop` is set, then loop the first NUM packets.
 - Options to control packet rate. Only one can be given, if none of these
   options is present, packets are written with the rate they have been saved to
   the `pcap` file:
