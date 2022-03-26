@@ -1,8 +1,9 @@
 # Pktreplay
 
-`pktreplay` can be used to read packets from `pcap` file and write them into
-interface. By default packets are written with the same rate they have been
-saved into the pcap file.
+`pktreplay` can be used to read packets from `pcap` file or interface and write
+them into interface. By default packets are written with the same rate they have
+been saved into the pcap file, or, when reading from interface, as fast as they
+are received.
 
 `pktreplay` takes its inspiration from
 [tcpreplay](https://tcpreplay.appneta.com), but without packet editing
@@ -15,15 +16,17 @@ capability to be able to write raw data to the interface.
 
 Following command line options are available:
 
-- `-f` or `--file <FILE>`: Read packets from pcap file `FILE`. This option is
-  mandatory
-- `-o` or `--output <IFANE>`: Write packets to interface with name `IFNAME`. If
+- Options to control where packets are read from. One of these must be present:
+  - `-f` or `--file <FILE>`: Read packets from pcap file `FILE`.
+  - `-i` or `--interface <IFNAME>`: Read packets from given interface.
+- `-o` or `--output <IFNAME>`: Write packets to interface with name `IFNAME`. If
   this option is not given, packets are written to `/dev/null`.
 - `-l` or `--loop`: Loop packets from file, that is start writing packets again
   from the beginning once all packets are written. Program terminates when user
   presses ctrl+c.
 - `-c` or `--count <NUM>`: Read only NUM first packets from the file and output
   them. If `--loop` is set, then loop the first NUM packets.
+- `-S` or `--stats <SEC>`: Print statistics every SEC seconds.
 - Options to control packet rate. Only one can be given, if none of these
   options is present, packets are written with the rate they have been saved to
   the `pcap` file:
