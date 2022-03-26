@@ -13,8 +13,29 @@ mod input;
 mod output;
 mod pipe;
 
-fn read_from_file_to(
-    fname: String,
+// Defines the method to read packets.
+enum InputMethod {
+    File(String),
+    Interface(String),
+}
+
+impl InputMethod {
+    // create PcapInput for this method
+    fn to_pcap_input(&self) -> Result<input::PcapInput> {
+        match self {
+            InputMethod::File(fname) => Ok(input::pcap_file(fname)?),
+            InputMethod::Interface(ifname) => Ok(input::pcap_interface(ifname)?),
+        }
+    }
+}
+
+// starts thread to read packets using given input method.
+// Packets read are sent using `tx` and `pipe` should be the pipe consuming
+// packets.
+// Returns once all packets are read or termination is requested by setting the
+// `terminate` to true
+fn input_task(
+    method: InputMethod,
     loop_file: bool,
     pipe: pipe::Pipe,
     tx: channel::Tx,
@@ -26,7 +47,7 @@ fn read_from_file_to(
         .spawn(move || {
             let mut stats = Default::default();
             loop {
-                let inp = input::pcap_file(&fname)?;
+                let inp = method.to_pcap_input()?;
                 let it = match limit {
                     Some(n) => {
                         Box::new(inp.packets().take(n)) as Box<dyn Iterator<Item = input::Packet>>
@@ -72,7 +93,7 @@ fn main() {
     env_logger::init();
     let matches = clap::App::new("pktreply")
         .version("v0.1.0")
-        .arg(clap::arg!(-f --file <FILE> "Name of the pcap file to read"))
+        .arg(clap::arg!(-f --file <FILE> "Name of the pcap file to read").required(false))
         .arg(
             clap::arg!(-o --output <INFAME> "Name of the interface to inject packets to")
                 .required(false),
@@ -104,16 +125,35 @@ fn main() {
                 .validator(|v| v.parse::<usize>())
                 .required(false),
         )
+        .arg(
+            clap::arg!(-i --interface <IFNAME> "Name of the interface to read packets from")
+                .required(false),
+        )
         .get_matches();
 
+    if matches.is_present("file") && matches.is_present("interface") {
+        error!("Both --file and --interface inputs can not be defined at the same time");
+        return;
+    }
+    let method = if matches.is_present("file") {
+        InputMethod::File(matches.value_of("file").unwrap().to_string())
+    } else if matches.is_present("interface") {
+        InputMethod::Interface(matches.value_of("interface").unwrap().to_string())
+    } else {
+        error!("No input defined. Either --file or --interface is required");
+        return;
+    };
+
     let loop_file = matches.is_present("loop");
-    let full = matches.is_present("fullspeed");
+
+    let mut full = matches.is_present("fullspeed");
     if full && (matches.is_present("pps") || matches.is_present("mbps"))
         || !full && (matches.is_present("pps") && matches.is_present("mbps"))
     {
         error!("Only one of --full, --pps, --bps options can be present");
         return;
     }
+
     let pps = if matches.is_present("pps") {
         Some::<u32>(matches.value_of_t("pps").unwrap())
     } else {
@@ -127,7 +167,6 @@ fn main() {
         None
     };
 
-    let fname = matches.value_of("file").unwrap().to_string();
     let ch_hi: u64 = if matches.is_present("hi") {
         matches.value_of_t("hi").unwrap()
     } else {
@@ -154,6 +193,14 @@ fn main() {
         return;
     }
 
+    if matches!(method, InputMethod::Interface(_)) && pps.is_none() && bps.is_none() {
+        // if no pps or bps options are defined and we are reading from interface
+        // force the --full which causes packets to be written to the output
+        // interface as soon as they are received, which is probably what
+        // users would expect.
+        full = true;
+    }
+
     let (tx, rx) = channel::create(ch_hi, ch_low);
     let p = if let Some(ifname) = matches.value_of("output") {
         output::interface(ifname).and_then(|o| create_pipe(full, pps, bps, rx, o))
@@ -162,7 +209,7 @@ fn main() {
     };
     match p {
         Ok(pipe) => {
-            if let Err(e) = read_from_file_to(fname, loop_file, pipe, tx, terminate, limit) {
+            if let Err(e) = input_task(method, loop_file, pipe, tx, terminate, limit) {
                 error!("Error while processing packets: {}", e);
             }
         }
