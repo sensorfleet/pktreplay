@@ -22,6 +22,17 @@ where
     Ok(PcapInput { handle: pcap })
 }
 
+// Creates input for reading packets from given interface
+pub fn pcap_interface(ifname: &str) -> Result<PcapInput> {
+    let builder = Pcap::builder(ifname)?
+        .set_buffer_size(65535)?
+        .set_promiscuous(true)?
+        .set_immediate(true)?;
+    Ok(PcapInput {
+        handle: builder.activate()?,
+    })
+}
+
 impl PcapInput {
     pub fn packets(&self) -> impl Iterator<Item = Packet> + '_ {
         return self.handle.capture().map(|p| Packet {
