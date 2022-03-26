@@ -14,9 +14,11 @@ use crate::{
 };
 // Stats contains statistics about processed packets
 pub struct Stats {
-    pub packets: u64,
-    pub bytes: u64,
-    pub start: Instant,
+    packets: u64,
+    bytes: u64,
+    start: Instant,
+    sender: Option<crossbeam_channel::Sender<String>>,
+    tick: crossbeam_channel::Receiver<Instant>,
 }
 
 impl Default for Stats {
@@ -25,19 +27,38 @@ impl Default for Stats {
             start: Instant::now(),
             packets: Default::default(),
             bytes: Default::default(),
+            sender: None,
+            tick: crossbeam_channel::never(),
         }
     }
 }
 
-impl Display for Stats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let elapsed = self.start.elapsed();
+impl Stats {
+    // update the statistics with a packet containing given number of bytes
+    fn update(&mut self, bytes: u64) {
+        self.packets += 1;
+        self.bytes += bytes;
+        if let Ok(_now) = self.tick.try_recv() {
+            if let Err(e) = self
+                .sender
+                .as_ref()
+                .unwrap()
+                .send(self.summary(Instant::now()))
+            {
+                warn!("Error while sending stat summary: {}", e)
+            }
+        }
+    }
+
+    // produce string containing summary of statistics.
+    //  `when` is used to calculate duration for the statistics.
+    fn summary(&self, when: Instant) -> String {
+        let elapsed = when.duration_since(self.start);
         let pps = self.packets as f64 / elapsed.as_secs_f64();
         let bps = (self.bytes as f64 * 8_f64) / elapsed.as_secs_f64();
         let mbps = (self.bytes as f64 / (1024 * 1024) as f64) / elapsed.as_secs_f64();
 
-        write!(
-            f,
+        format!(
             "{} packets, {} bytes in {}ms / {:.3}pps, {:.3}bps ({:.3} MBps)",
             self.packets,
             self.bytes,
@@ -46,6 +67,33 @@ impl Display for Stats {
             bps,
             mbps
         )
+    }
+
+    // reset the stats
+    fn reset(&mut self) {
+        self.bytes = 0;
+        self.packets = 0;
+        self.start = Instant::now();
+    }
+
+    // create Stats object which will send summary with given `period` to
+    // returned receiver.
+    pub fn periodic(period: Duration) -> (Stats, crossbeam_channel::Receiver<String>) {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        (
+            Stats {
+                tick: crossbeam_channel::tick(period),
+                sender: Some(sender),
+                ..Default::default()
+            },
+            receiver,
+        )
+    }
+}
+
+impl Display for Stats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.summary(Instant::now()))
     }
 }
 
@@ -70,8 +118,7 @@ pub fn read_packets_to(
     terminate: Arc<AtomicBool>,
 ) -> Result<Stats> {
     for pkt in input {
-        stats.packets += 1;
-        stats.bytes += pkt.data.len() as u64;
+        stats.update(pkt.data.len() as u64);
         tx.write_packet(pkt)?;
         if terminate.load(std::sync::atomic::Ordering::Relaxed) {
             error!("terminated!");
@@ -196,8 +243,13 @@ impl Delayer for PacketRateDelay {
     }
 }
 
-fn write_packets(rx: Rx, mut output: impl PacketWriter, mut delay: impl Delayer) -> Result<Stats> {
-    let mut stats: Stats = Default::default();
+fn write_packets(
+    rx: Rx,
+    mut output: impl PacketWriter,
+    mut delay: impl Delayer,
+    mut stats: Stats,
+) -> Result<Stats> {
+    stats.reset();
     delay.init();
     for pkt in rx {
         if let Some(wait_time) = delay.wait_time_for(&pkt) {
@@ -206,8 +258,7 @@ fn write_packets(rx: Rx, mut output: impl PacketWriter, mut delay: impl Delayer)
         }
         match output.write_packet(pkt) {
             Ok(len) => {
-                stats.packets += 1;
-                stats.bytes += len as u64;
+                stats.update(len as u64);
             }
             Err(e) => warn!("Unable to write packet: {}", e),
         }
@@ -219,31 +270,42 @@ fn create_pipe_for(
     rx: Rx,
     output: impl PacketWriter + Send + 'static,
     delayer: impl Delayer + Send + 'static,
+    stats: Stats,
 ) -> Result<Pipe> {
     let wr_handle = thread::Builder::new()
         .name("pkt-writer".to_string())
-        .spawn(|| write_packets(rx, output, delayer))?;
+        .spawn(|| write_packets(rx, output, delayer, stats))?;
     Ok(Pipe { wr_handle })
 }
 
 // delaying creates a pipe writing packets from given Rx to given output. The
 // packets are written with original rate they were recorded.
-pub fn delaying(rx: Rx, output: impl PacketWriter + Send + 'static) -> Result<Pipe> {
-    create_pipe_for(rx, output, PacketRateDelay::new())
+pub fn delaying(rx: Rx, output: impl PacketWriter + Send + 'static, stats: Stats) -> Result<Pipe> {
+    create_pipe_for(rx, output, PacketRateDelay::new(), stats)
 }
 
 // fullspeed creates a pipe writing packets from given Rx to given output, the
 // packets are written out as fast as they are read with no delay between
-pub fn fullspeed(rx: Rx, output: impl PacketWriter + Send + 'static) -> Result<Pipe> {
-    create_pipe_for(rx, output, NoDelay {})
+pub fn fullspeed(rx: Rx, output: impl PacketWriter + Send + 'static, stats: Stats) -> Result<Pipe> {
+    create_pipe_for(rx, output, NoDelay {}, stats)
 }
 
 // pps creates a pipe writing packets at constant rate of given number of packets
 // per second.
-pub fn pps(rx: Rx, output: impl PacketWriter + Send + 'static, pps: u32) -> Result<Pipe> {
-    create_pipe_for(rx, output, PpsDelay::new(pps))
+pub fn pps(
+    rx: Rx,
+    output: impl PacketWriter + Send + 'static,
+    pps: u32,
+    stats: Stats,
+) -> Result<Pipe> {
+    create_pipe_for(rx, output, PpsDelay::new(pps), stats)
 }
 
-pub fn bps(rx: Rx, output: impl PacketWriter + Send + 'static, bps: u64) -> Result<Pipe> {
-    create_pipe_for(rx, output, BpsDelay::new(bps))
+pub fn bps(
+    rx: Rx,
+    output: impl PacketWriter + Send + 'static,
+    bps: u64,
+    stats: Stats,
+) -> Result<Pipe> {
+    create_pipe_for(rx, output, BpsDelay::new(bps), stats)
 }
