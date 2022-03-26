@@ -7,6 +7,7 @@ use signal_hook::flag;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 mod channel;
 mod input;
@@ -27,6 +28,17 @@ impl InputMethod {
             InputMethod::Interface(ifname) => Ok(input::pcap_interface(ifname)?),
         }
     }
+}
+
+fn start_printer_task(receiver: crossbeam_channel::Receiver<String>) -> thread::JoinHandle<()> {
+    thread::Builder::new()
+        .name("stat-reader".to_string())
+        .spawn(move || {
+            for line in receiver {
+                println!("{}", line)
+            }
+        })
+        .unwrap()
 }
 
 // starts thread to read packets using given input method.
@@ -77,15 +89,16 @@ fn create_pipe(
     bps: Option<u64>,
     rx: channel::Rx,
     outp: impl output::PacketWriter + Send + 'static,
+    stats: pipe::Stats,
 ) -> anyhow::Result<pipe::Pipe> {
     if let Some(p) = pps {
-        pipe::pps(rx, outp, p)
+        pipe::pps(rx, outp, p, stats)
     } else if let Some(b) = bps {
-        pipe::bps(rx, outp, b)
+        pipe::bps(rx, outp, b, stats)
     } else if full {
-        pipe::fullspeed(rx, outp)
+        pipe::fullspeed(rx, outp, stats)
     } else {
-        pipe::delaying(rx, outp)
+        pipe::delaying(rx, outp, stats)
     }
 }
 
@@ -127,6 +140,11 @@ fn main() {
         )
         .arg(
             clap::arg!(-i --interface <IFNAME> "Name of the interface to read packets from")
+                .required(false),
+        )
+        .arg(
+            clap::arg!(-S --stats <VALUE> "Print statistics every VALUE seconds")
+                .validator(|v| v.parse::<u64>())
                 .required(false),
         )
         .get_matches();
@@ -187,6 +205,12 @@ fn main() {
         None
     };
 
+    let stat_period = if matches.is_present("stats") {
+        Some(Duration::from_secs(matches.value_of_t("stats").unwrap()))
+    } else {
+        None
+    };
+
     let terminate = Arc::new(AtomicBool::from(false));
     if let Err(e) = flag::register(SIGINT, Arc::clone(&terminate)) {
         error!("Unable to register signal handler: {e}");
@@ -202,10 +226,16 @@ fn main() {
     }
 
     let (tx, rx) = channel::create(ch_hi, ch_low);
-    let p = if let Some(ifname) = matches.value_of("output") {
-        output::interface(ifname).and_then(|o| create_pipe(full, pps, bps, rx, o))
+    let (stats, stat_printer) = if let Some(period) = stat_period {
+        let (s, r) = pipe::Stats::periodic(period);
+        (s, Some(start_printer_task(r)))
     } else {
-        output::sink().and_then(|o| create_pipe(full, pps, bps, rx, o))
+        (pipe::Stats::default(), None)
+    };
+    let p = if let Some(ifname) = matches.value_of("output") {
+        output::interface(ifname).and_then(|o| create_pipe(full, pps, bps, rx, o, stats))
+    } else {
+        output::sink().and_then(|o| create_pipe(full, pps, bps, rx, o, stats))
     };
     match p {
         Ok(pipe) => {
@@ -214,5 +244,9 @@ fn main() {
             }
         }
         Err(e) => error!("{}", e),
+    }
+    // wait for stat printer to terminate
+    if let Some(handle) = stat_printer {
+        handle.join().unwrap();
     }
 }
