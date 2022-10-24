@@ -114,12 +114,12 @@ fn main() {
         .arg(clap::arg!(-l --loop "Loop pcap file"))
         .arg(clap::arg!(-F --fullspeed "Write packets as fast as possible"))
         .arg(
-            clap::arg!(-L --low <VALUE> "Minimum watermark for packet buffe")
+            clap::arg!(-L --low <VALUE> "Low watermark for packet buffer")
                 .validator(|v| v.parse::<u64>())
                 .required(false),
         )
         .arg(
-            clap::arg!(-H --hi <VALUE> "Hi watermark for packet buffer")
+            clap::arg!(-H --hi <VALUE> "High watermark for packet buffer")
                 .validator(|v| v.parse::<u64>())
                 .required(false),
         )
@@ -143,7 +143,7 @@ fn main() {
                 .required(false),
         )
         .arg(
-            clap::arg!(-S --stats <VALUE> "Print statistics every VALUE seconds")
+            clap::arg!(-S --stats <VALUE> "Print statistics every <VALUE> seconds")
                 .validator(|v| v.parse::<u64>())
                 .required(false),
         )
@@ -196,7 +196,7 @@ fn main() {
         ch_hi / 2
     };
     if ch_low >= ch_hi {
-        error!("packet buffer low watermark can not be larger than hi");
+        error!("packet buffer low watermark can not be larger than high");
         return;
     }
     let limit = if matches.is_present("count") {
