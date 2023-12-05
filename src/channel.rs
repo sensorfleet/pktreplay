@@ -1,9 +1,10 @@
 use std::{
     fmt::Display,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        mpsc::{self, Receiver, SendError, Sender},
+        Arc, Condvar, Mutex,
+    },
 };
-
-use crossbeam_channel::{Receiver, SendError, Sender};
 
 use crate::input::Packet;
 #[derive(Debug)]
@@ -110,7 +111,7 @@ impl Tx {
 // block until packets are consumed from channel and only `lo` number of
 // packets are left.
 pub fn create(hi: u64, lo: u64) -> (Tx, Rx) {
-    let (sender, recv) = crossbeam_channel::unbounded();
+    let (sender, recv) = mpsc::channel();
     let ctx = Arc::new((
         Mutex::new(ChannelContext {
             packets: 0,

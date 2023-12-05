@@ -5,6 +5,7 @@ use anyhow::Result;
 use signal_hook::consts::SIGINT;
 use signal_hook::flag;
 use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -30,7 +31,7 @@ impl InputMethod {
     }
 }
 
-fn start_printer_task(receiver: crossbeam_channel::Receiver<String>) -> thread::JoinHandle<()> {
+fn start_printer_task(receiver: Receiver<String>) -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("stat-reader".to_string())
         .spawn(move || {
