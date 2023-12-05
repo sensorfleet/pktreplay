@@ -1,6 +1,10 @@
 use std::{
     fmt::Display,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::AtomicBool,
+        mpsc::{self, Receiver},
+        Arc,
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime},
 };
@@ -17,18 +21,20 @@ pub struct Stats {
     packets: u64,
     bytes: u64,
     start: Instant,
-    sender: Option<crossbeam_channel::Sender<String>>,
-    tick: crossbeam_channel::Receiver<Instant>,
+    interval: Option<Duration>,
+    last_stat: Instant,
+    sender: Option<mpsc::Sender<String>>,
 }
 
 impl Default for Stats {
     fn default() -> Self {
         Self {
             start: Instant::now(),
+            last_stat: Instant::now(),
             packets: Default::default(),
             bytes: Default::default(),
             sender: None,
-            tick: crossbeam_channel::never(),
+            interval: None,
         }
     }
 }
@@ -38,14 +44,17 @@ impl Stats {
     fn update(&mut self, bytes: u64) {
         self.packets += 1;
         self.bytes += bytes;
-        if let Ok(_now) = self.tick.try_recv() {
-            if let Err(e) = self
-                .sender
-                .as_ref()
-                .unwrap()
-                .send(self.summary(Instant::now()))
-            {
-                warn!("Error while sending stat summary: {}", e)
+        if let Some(val) = self.interval {
+            if self.last_stat.elapsed() > val {
+                if let Err(e) = self
+                    .sender
+                    .as_ref()
+                    .unwrap()
+                    .send(self.summary(Instant::now()))
+                {
+                    warn!("Error while sending stat summary: {}", e)
+                }
+                self.last_stat = Instant::now();
             }
         }
     }
@@ -78,12 +87,12 @@ impl Stats {
 
     // create Stats object which will send summary with given `period` to
     // returned receiver.
-    pub fn periodic(period: Duration) -> (Stats, crossbeam_channel::Receiver<String>) {
-        let (sender, receiver) = crossbeam_channel::unbounded();
+    pub fn periodic(period: Duration) -> (Stats, Receiver<String>) {
+        let (sender, receiver) = mpsc::channel();
         (
             Stats {
-                tick: crossbeam_channel::tick(period),
                 sender: Some(sender),
+                interval: Some(period),
                 ..Default::default()
             },
             receiver,
