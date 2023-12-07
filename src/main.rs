@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-
 use anyhow::Result;
 use signal_hook::consts::SIGINT;
 use signal_hook::flag;
@@ -71,13 +68,13 @@ fn input_task(
                 if !loop_file || terminate.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
-                info!("pcap file iteration complete: {}", stats)
+                tracing::info!("pcap file iteration complete: {}", stats)
             }
             Ok(stats)
         })
         .unwrap();
     rd_handle.join().unwrap()?;
-    trace!("Reader terminated");
+    tracing::trace!("Reader terminated");
 
     let s = pipe.wait()?;
     println!("Write complete: {}", s);
@@ -104,7 +101,7 @@ fn create_pipe(
 }
 
 fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt::init();
     let matches = clap::App::new("pktreply")
         .version("v0.1.0")
         .arg(clap::arg!(-f --file <FILE> "Name of the pcap file to read").required(false))
@@ -151,7 +148,7 @@ fn main() {
         .get_matches();
 
     if matches.is_present("file") && matches.is_present("interface") {
-        error!("Both --file and --interface inputs can not be defined at the same time");
+        tracing::error!("Both --file and --interface inputs can not be defined at the same time");
         return;
     }
     let method = if matches.is_present("file") {
@@ -159,7 +156,7 @@ fn main() {
     } else if matches.is_present("interface") {
         InputMethod::Interface(matches.value_of("interface").unwrap().to_string())
     } else {
-        error!("No input defined. Either --file or --interface is required");
+        tracing::error!("No input defined. Either --file or --interface is required");
         return;
     };
 
@@ -169,7 +166,7 @@ fn main() {
     if full && (matches.is_present("pps") || matches.is_present("mbps"))
         || !full && (matches.is_present("pps") && matches.is_present("mbps"))
     {
-        error!("Only one of --full, --pps, --bps options can be present");
+        tracing::error!("Only one of --full, --pps, --bps options can be present");
         return;
     }
 
@@ -197,7 +194,7 @@ fn main() {
         ch_hi / 2
     };
     if ch_low >= ch_hi {
-        error!("packet buffer low watermark can not be larger than high");
+        tracing::error!("packet buffer low watermark can not be larger than high");
         return;
     }
     let limit = if matches.is_present("count") {
@@ -214,7 +211,7 @@ fn main() {
 
     let terminate = Arc::new(AtomicBool::from(false));
     if let Err(e) = flag::register(SIGINT, Arc::clone(&terminate)) {
-        error!("Unable to register signal handler: {e}");
+        tracing::error!("Unable to register signal handler: {e}");
         return;
     }
 
@@ -241,10 +238,10 @@ fn main() {
     match p {
         Ok(pipe) => {
             if let Err(e) = input_task(method, loop_file, pipe, tx, terminate, limit) {
-                error!("Error while processing packets: {}", e);
+                tracing::error!("Error while processing packets: {}", e);
             }
         }
-        Err(e) => error!("{}", e),
+        Err(e) => tracing::error!("{}", e),
     }
     // wait for stat printer to terminate
     if let Some(handle) = stat_printer {
