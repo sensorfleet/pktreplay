@@ -52,7 +52,7 @@ impl Stats {
                     .unwrap()
                     .send(self.summary(Instant::now()))
                 {
-                    warn!("Error while sending stat summary: {}", e)
+                    tracing::warn!("Error while sending stat summary: {}", e)
                 }
                 self.last_stat = Instant::now();
             }
@@ -114,7 +114,7 @@ pub struct Pipe {
 impl Pipe {
     pub fn wait(self) -> Result<Stats> {
         let wr_stat = self.wr_handle.join().unwrap()?;
-        trace!("Writer terminated, processed: {}", wr_stat);
+        tracing::trace!("Writer terminated, processed: {}", wr_stat);
         Ok(wr_stat)
     }
 }
@@ -130,7 +130,7 @@ pub fn read_packets_to(
         stats.update(pkt.data.len() as u64);
         tx.write_packet(pkt)?;
         if terminate.load(std::sync::atomic::Ordering::Relaxed) {
-            error!("terminated!");
+            tracing::error!("terminated!");
             break;
         }
     }
@@ -262,14 +262,14 @@ fn write_packets(
     delay.init();
     for pkt in rx {
         if let Some(wait_time) = delay.wait_time_for(&pkt) {
-            trace!("sleeping {}us before write", wait_time.as_micros());
+            tracing::trace!("sleeping {}us before write", wait_time.as_micros());
             thread::sleep(wait_time);
         }
         match output.write_packet(pkt) {
             Ok(len) => {
                 stats.update(len as u64);
             }
-            Err(e) => warn!("Unable to write packet: {}", e),
+            Err(e) => tracing::warn!("Unable to write packet: {}", e),
         }
     }
     Ok(stats)

@@ -60,10 +60,10 @@ impl Iterator for IntoRxIter {
             ctx.packets -= 1;
             if ctx.packets < self.rx.watermark_lo && ctx.paused {
                 ctx.paused = false;
-                trace!("waking packet reader");
+                tracing::trace!("waking packet reader");
                 cvar.notify_one();
             }
-            trace!("rx complete, packets in channel: {}", ctx.packets);
+            tracing::trace!("rx complete, packets in channel: {}", ctx.packets);
         }
         packet
     }
@@ -96,12 +96,12 @@ impl Tx {
             ctx.paused = true;
         }
         while ctx.paused {
-            trace!("Packet reading paused");
+            tracing::trace!("Packet reading paused");
             ctx = cvar.wait(ctx).unwrap();
         }
         self.sender.send(pkt)?;
         ctx.packets += 1;
-        trace!("tx complete, packets in channel: {}", ctx.packets);
+        tracing::trace!("tx complete, packets in channel: {}", ctx.packets);
         Ok(())
     }
 }
