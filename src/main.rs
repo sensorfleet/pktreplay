@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use clap::{Args, Parser};
+
 mod channel;
 mod input;
 mod output;
@@ -26,6 +28,20 @@ impl InputMethod {
             InputMethod::Interface(ifname) => Ok(input::pcap_interface(ifname)?),
         }
     }
+}
+
+/// Packet rate for writing packets
+enum Rate {
+    /// Write as fast as possible
+    Full,
+    /// Write with set packet per second
+    Pps(u32),
+    /// Write given megabits per second.
+    Mbps(u64),
+    /// Write packets with a delay implied by their timestamps. This is used
+    /// when reding from a pcap file and we want to output packets in same
+    /// rate as they were saved to the file.
+    Delayed,
 }
 
 fn start_printer_task(receiver: Receiver<String>) -> thread::JoinHandle<()> {
@@ -82,132 +98,113 @@ fn input_task(
 }
 
 fn create_pipe(
-    full: bool,
-    pps: Option<u32>,
-    bps: Option<u64>,
+    rate: Rate,
     rx: channel::Rx,
-    outp: impl output::PacketWriter + Send + 'static,
+    output: impl output::PacketWriter + Send + 'static,
     stats: pipe::Stats,
 ) -> anyhow::Result<pipe::Pipe> {
-    if let Some(p) = pps {
-        pipe::pps(rx, outp, p, stats)
-    } else if let Some(b) = bps {
-        pipe::bps(rx, outp, b, stats)
-    } else if full {
-        pipe::fullspeed(rx, outp, stats)
-    } else {
-        pipe::delaying(rx, outp, stats)
+    match rate {
+        Rate::Full => pipe::fullspeed(rx, output, stats),
+        Rate::Delayed => pipe::delaying(rx, output, stats),
+        Rate::Mbps(bps) => pipe::bps(rx, output, bps, stats),
+        Rate::Pps(pps) => pipe::pps(rx, output, pps, stats),
     }
+}
+
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct InputParam {
+    /// Name of the pcap file to read
+    #[arg(long, short = 'f')]
+    file: Option<String>,
+    /// Read packets from given interface instead of a file
+    #[arg[short, long ]]
+    interface: Option<String>,
+}
+
+impl InputParam {
+    /// Returns input method selected
+    fn method(&self) -> InputMethod {
+        if let Some(ref fname) = self.file {
+            InputMethod::File(fname.clone())
+        } else if let Some(ref ifname) = self.interface {
+            InputMethod::Interface(ifname.clone())
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+#[derive(Args)]
+#[group(required = false, multiple = false)]
+struct RateParam {
+    #[arg(short, long)]
+    /// Replay packets with given rate of packets per second
+    pps: Option<u32>,
+    /// Replay packets with given megabits per second
+    #[arg(short = 'M', long)]
+    mbps: Option<f32>,
+    /// Write packets as fast as possible
+    #[arg(short = 'F', long)]
+    fullspeed: bool,
+}
+
+impl RateParam {
+    /// Returns proper [Rate] defined by these options.
+    fn get_rate(&self) -> Rate {
+        if let Some(pps) = self.pps {
+            Rate::Pps(pps)
+        } else if let Some(mbps) = self.mbps {
+            Rate::Mbps((mbps * 1_000_000_f32) as u64)
+        } else if self.fullspeed {
+            Rate::Full
+        } else {
+            Rate::Delayed
+        }
+    }
+}
+
+/// Command line parameters
+#[derive(Parser)]
+#[command(author, version)]
+struct Params {
+    #[command[flatten]]
+    input: InputParam,
+    #[command(flatten)]
+    rate: RateParam,
+    /// Name of the interface to inject packets into. If not given, packets
+    /// are written into /dev/null
+    #[arg(short, long)]
+    output: Option<String>,
+    /// Loop pcap file instead of stopping when all packets are read
+    #[arg[short, long="loop"]]
+    looping: bool,
+    /// Low watermark for packet buffer
+    #[arg[short = 'L', long]]
+    low: Option<u64>,
+    /// High watermark for packet buffer
+    #[arg(short = 'H', long)]
+    high: Option<u64>,
+    /// Stop replaying after given number of packets have been replayed
+    #[arg[short, long]]
+    count: Option<usize>,
+    /// Print statistics with interval of given number of seconds
+    #[arg[short='S', long]]
+    stats: Option<u64>,
 }
 
 fn main() {
     tracing_subscriber::fmt::init();
-    let matches = clap::App::new("pktreply")
-        .version("v0.1.0")
-        .arg(clap::arg!(-f --file <FILE> "Name of the pcap file to read").required(false))
-        .arg(
-            clap::arg!(-o --output <INFAME> "Name of the interface to inject packets to")
-                .required(false),
-        )
-        .arg(clap::arg!(-l --loop "Loop pcap file"))
-        .arg(clap::arg!(-F --fullspeed "Write packets as fast as possible"))
-        .arg(
-            clap::arg!(-L --low <VALUE> "Low watermark for packet buffer")
-                .validator(|v| v.parse::<u64>())
-                .required(false),
-        )
-        .arg(
-            clap::arg!(-H --hi <VALUE> "High watermark for packet buffer")
-                .validator(|v| v.parse::<u64>())
-                .required(false),
-        )
-        .arg(
-            clap::arg!(-p --pps <VALUE> "Replay packets at rate of <VALUE> packets per second")
-                .validator(|v| v.parse::<u32>())
-                .required(false),
-        )
-        .arg(
-            clap::arg!(-M --mbps <VALUE> "Replay packets at rate of <VALUE> Mbits per second")
-                .validator(|v| v.parse::<f32>())
-                .required(false),
-        )
-        .arg(
-            clap::arg!(-c --count <VALUE> "Send up to <VALUE> packets from the file")
-                .validator(|v| v.parse::<usize>())
-                .required(false),
-        )
-        .arg(
-            clap::arg!(-i --interface <IFNAME> "Name of the interface to read packets from")
-                .required(false),
-        )
-        .arg(
-            clap::arg!(-S --stats <VALUE> "Print statistics every <VALUE> seconds")
-                .validator(|v| v.parse::<u64>())
-                .required(false),
-        )
-        .get_matches();
+    let params = Params::parse();
+    let method = params.input.method();
+    let mut rate = params.rate.get_rate();
 
-    if matches.is_present("file") && matches.is_present("interface") {
-        tracing::error!("Both --file and --interface inputs can not be defined at the same time");
-        return;
-    }
-    let method = if matches.is_present("file") {
-        InputMethod::File(matches.value_of("file").unwrap().to_string())
-    } else if matches.is_present("interface") {
-        InputMethod::Interface(matches.value_of("interface").unwrap().to_string())
-    } else {
-        tracing::error!("No input defined. Either --file or --interface is required");
-        return;
-    };
-
-    let loop_file = matches.is_present("loop");
-
-    let mut full = matches.is_present("fullspeed");
-    if full && (matches.is_present("pps") || matches.is_present("mbps"))
-        || !full && (matches.is_present("pps") && matches.is_present("mbps"))
-    {
-        tracing::error!("Only one of --full, --pps, --bps options can be present");
-        return;
-    }
-
-    let pps = if matches.is_present("pps") {
-        Some::<u32>(matches.value_of_t("pps").unwrap())
-    } else {
-        None
-    };
-
-    let bps = if matches.is_present("mbps") {
-        Some::<u64>((matches.value_of_t::<f32>("mbps").unwrap() * 1_000_000_f32) as u64)
-    // convert to bits/sec
-    } else {
-        None
-    };
-
-    let ch_hi: u64 = if matches.is_present("hi") {
-        matches.value_of_t("hi").unwrap()
-    } else {
-        100
-    };
-    let ch_low: u64 = if matches.is_present("low") {
-        matches.value_of_t("low").unwrap()
-    } else {
-        ch_hi / 2
-    };
+    let ch_hi: u64 = params.high.unwrap_or(100);
+    let ch_low = params.low.unwrap_or(ch_hi / 2);
     if ch_low >= ch_hi {
         tracing::error!("packet buffer low watermark can not be larger than high");
         return;
     }
-    let limit = if matches.is_present("count") {
-        Some(matches.value_of_t::<usize>("count").unwrap())
-    } else {
-        None
-    };
-
-    let stat_period = if matches.is_present("stats") {
-        Some(Duration::from_secs(matches.value_of_t("stats").unwrap()))
-    } else {
-        None
-    };
 
     let terminate = Arc::new(AtomicBool::from(false));
     if let Err(e) = flag::register(SIGINT, Arc::clone(&terminate)) {
@@ -215,29 +212,31 @@ fn main() {
         return;
     }
 
-    if matches!(method, InputMethod::Interface(_)) && pps.is_none() && bps.is_none() {
+    if matches!(method, InputMethod::Interface(_)) && matches!(rate, Rate::Delayed) {
         // if no pps or bps options are defined and we are reading from interface
         // force the --full which causes packets to be written to the output
         // interface as soon as they are received, which is probably what
         // users would expect.
-        full = true;
+        rate = Rate::Full;
     }
 
     let (tx, rx) = channel::create(ch_hi, ch_low);
+    let stat_period = params.stats.map(Duration::from_secs);
     let (stats, stat_printer) = if let Some(period) = stat_period {
         let (s, r) = pipe::Stats::periodic(period);
         (s, Some(start_printer_task(r)))
     } else {
         (pipe::Stats::default(), None)
     };
-    let p = if let Some(ifname) = matches.value_of("output") {
-        output::interface(ifname).and_then(|o| create_pipe(full, pps, bps, rx, o, stats))
+    let p = if let Some(ref ifname) = params.output {
+        output::interface(ifname).and_then(|o| create_pipe(rate, rx, o, stats))
     } else {
-        output::sink().and_then(|o| create_pipe(full, pps, bps, rx, o, stats))
+        output::sink().and_then(|o| create_pipe(rate, rx, o, stats))
     };
+
     match p {
         Ok(pipe) => {
-            if let Err(e) = input_task(method, loop_file, pipe, tx, terminate, limit) {
+            if let Err(e) = input_task(method, params.looping, pipe, tx, terminate, params.count) {
                 tracing::error!("Error while processing packets: {}", e);
             }
         }
