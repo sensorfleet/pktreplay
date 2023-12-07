@@ -1,6 +1,7 @@
 use std::{path::Path, time::SystemTime};
 
 use anyhow::Result;
+use luomu_libpcap::Packet as LibpcapPacket;
 use luomu_libpcap::Pcap;
 
 // Raw packet read from input
@@ -36,8 +37,8 @@ pub fn pcap_interface(ifname: &str) -> Result<PcapInput> {
 impl PcapInput {
     pub fn packets(&self) -> impl Iterator<Item = Packet> + '_ {
         return self.handle.capture().map(|p| Packet {
-            data: p.packet().to_vec(),
             when: p.timestamp(),
+            data: p.to_vec(),
         });
     }
 }
