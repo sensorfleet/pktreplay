@@ -29,7 +29,7 @@ Following command line options are available:
 - `-S` or `--stats <SEC>`: Print statistics every SEC seconds.
 - Options to control packet rate. Only one can be given, if none of these
   options is present, packets are written with the rate they have been saved to
-  the `pcap` file:
+  the `pcap` file or as soon as they are received from interface:
   - `-F` or `--fullspeed`: Write packets as fast as possible.
   - `-p` or `--pps <RATE>`: Write packets with `RATE` (integer) packets per
     second.
