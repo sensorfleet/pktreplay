@@ -1,3 +1,4 @@
+//! Channel which can be used to buffer packets
 use std::{
     fmt::Display,
     sync::{
@@ -7,9 +8,9 @@ use std::{
 };
 
 use crate::input::Packet;
+/// Error returned by channel operations
 #[derive(Debug)]
 pub enum ChannelError {
-    // Generic(),
     Send(SendError<Packet>),
 }
 
@@ -18,7 +19,6 @@ impl std::error::Error for ChannelError {}
 impl Display for ChannelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
-            // ChannelError::Generic() => write!(f, "Error in channel"),
             ChannelError::Send(se) => write!(f, "{}", se),
         }
     }
@@ -30,22 +30,26 @@ impl From<SendError<Packet>> for ChannelError {
     }
 }
 
+/// Context for channel
 struct ChannelContext {
-    // number of packets waiting on channel
+    /// number of packets waiting on channel
     packets: u64,
-    // should the producer be paused
+    /// should the producer be paused
     paused: bool,
 }
 
-//Receiver side of channel
-// Rx can be used as iterator to read packets from channel.
+/// Receiver side of channel.
+///
+/// Rx can be used as iterator to read packets from channel.
 pub struct Rx {
     recv: Receiver<Packet>,
     ctx: Arc<(Mutex<ChannelContext>, Condvar)>,
     watermark_lo: u64,
 }
 
+/// Iterator for reading packets.
 pub struct IntoRxIter {
+    /// Receiver for channel
     rx: Rx,
 }
 
@@ -79,7 +83,7 @@ impl IntoIterator for Rx {
     }
 }
 
-// Sender side of channel
+/// Sender side of channel
 pub struct Tx {
     sender: Sender<Packet>,
     watermark_hi: u64,
@@ -87,8 +91,10 @@ pub struct Tx {
 }
 
 impl Tx {
-    // write a packet to channel. If channel already is full, then
-    // this method blocks until the low packet treshold is reached.
+    /// Writes a packet to channel.
+    ///
+    /// If channel already is full, then this method blocks until the low
+    /// packet threshold is reached.
     pub fn write_packet(&self, pkt: Packet) -> Result<(), ChannelError> {
         let (mux, cvar) = &*self.ctx;
         let mut ctx = mux.lock().unwrap();
@@ -106,10 +112,12 @@ impl Tx {
     }
 }
 
-// Returns Tx and Rx for a channel that allows `hi` number of packets to be
-// queued. When hi number of packets are queued, the `Tx::write_packet()` will
-// block until packets are consumed from channel and only `lo` number of
-// packets are left.
+/// Creates a channel, returning [Tx] and [Rx] for a channel that allows
+/// `hi` number of packets to be queued.
+///
+/// When hi number of packets are queued, the [Tx::write_packet()] will
+/// block until packets are consumed from channel and only `lo` number of
+/// packets are left.
 pub fn create(hi: u64, lo: u64) -> (Tx, Rx) {
     let (sender, recv) = mpsc::channel();
     let ctx = Arc::new((
