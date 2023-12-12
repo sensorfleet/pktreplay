@@ -14,14 +14,16 @@ mod input;
 mod output;
 mod pipe;
 
-// Defines the method to read packets.
+/// Method to read packets
 enum InputMethod {
+    /// Read packets from pcap -file
     File(String),
+    /// Read packets from interface.
     Interface(String),
 }
 
 impl InputMethod {
-    // create PcapInput for this method
+    /// Creates [input::PcapInput] for this input method.
     fn to_pcap_input(&self) -> Result<input::PcapInput> {
         match self {
             InputMethod::File(fname) => Ok(input::pcap_file(fname)?),
@@ -44,6 +46,8 @@ enum Rate {
     Delayed,
 }
 
+/// Starts task for printing statistics to stdout. Returns [thread::JoinHandle]
+/// for created task.
 fn start_printer_task(receiver: Receiver<String>) -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("stat-reader".to_string())
@@ -55,11 +59,12 @@ fn start_printer_task(receiver: Receiver<String>) -> thread::JoinHandle<()> {
         .unwrap()
 }
 
-// starts thread to read packets using given input method.
-// Packets read are sent using `tx` and `pipe` should be the pipe consuming
-// packets.
-// Returns once all packets are read or termination is requested by setting the
-// `terminate` to true
+/// Starts thread to read packets using given [InputMethod].
+///
+/// Packets read are sent to `tx` and `pipe` should be the [pipe::Pipe] consuming
+/// packets.
+/// Returns once all packets are read or termination is requested by setting the
+/// `terminate` to true
 fn input_task(
     method: InputMethod,
     loop_file: bool,
@@ -97,6 +102,7 @@ fn input_task(
     Ok(())
 }
 
+/// Creates a [pipe::Pipe] with given parameters.
 fn create_pipe(
     rate: Rate,
     rx: channel::Rx,
@@ -111,6 +117,7 @@ fn create_pipe(
     }
 }
 
+/// Command line parameters for selecting input
 #[derive(Args)]
 #[group(required = true, multiple = false)]
 struct InputParam {
@@ -135,6 +142,7 @@ impl InputParam {
     }
 }
 
+/// Command line parameters for selecting output rate
 #[derive(Args)]
 #[group(required = false, multiple = false)]
 struct RateParam {

@@ -1,3 +1,4 @@
+//! Outputs for writing packets
 use crate::input::Packet;
 use anyhow::Result;
 use luomu_libpcap::Pcap;
@@ -6,14 +7,17 @@ use std::{
     io::Write,
 };
 
-// PacketWriter can be used to write Packet or its data
+/// PacketWriter can be used to write Packets or raw packet data.
 pub trait PacketWriter {
+    /// Writes raw packet data returning number of bytes written.
     fn write_raw(&mut self, buf: &[u8]) -> Result<usize>;
+    /// Writes given [Packet] returning number of bytes written.
     fn write_packet(&mut self, packet: Packet) -> Result<usize> {
         self.write_raw(&packet.data)
     }
 }
 
+/// Sink consuming all packets written to it.
 struct Sink(File);
 
 impl PacketWriter for Sink {
@@ -23,12 +27,13 @@ impl PacketWriter for Sink {
     }
 }
 
-// Returns PacketWriter which just consumes the packets
+/// Returns PacketWriter which just consumes the packets
 pub fn sink() -> Result<impl PacketWriter> {
     let f = OpenOptions::new().write(true).open("/dev/null")?;
     Ok(Sink(f))
 }
 
+/// [Interface] allows writing packets to network interface
 struct Interface(Pcap);
 
 impl PacketWriter for Interface {
@@ -37,7 +42,7 @@ impl PacketWriter for Interface {
     }
 }
 
-// Returns PcapWriter for writing packets to given interface
+/// Returns [PacketWriter] for writing packets to given interface.
 pub fn interface(name: &str) -> Result<impl PacketWriter> {
     let p = Pcap::new(name)?;
     p.activate()?;

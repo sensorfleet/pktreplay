@@ -1,3 +1,4 @@
+//! Pipe can be used to write packets to outputs at given rate.
 use std::{
     fmt::Display,
     sync::{
@@ -16,13 +17,19 @@ use crate::{
     input::Packet,
     output::PacketWriter,
 };
-// Stats contains statistics about processed packets
+/// Statistics about processed packets.
 pub struct Stats {
+    /// Number of packets processed since start or last reset
     packets: u64,
+    /// Number of bytes processed since start or last reset.
     bytes: u64,
+    /// When packet processing has started.
     start: Instant,
+    /// Interval for producing stats
     interval: Option<Duration>,
+    /// When stats were last produced
     last_stat: Instant,
+    /// [mpsc::Sender] for sending stats summary
     sender: Option<mpsc::Sender<String>>,
 }
 
@@ -40,7 +47,9 @@ impl Default for Stats {
 }
 
 impl Stats {
-    // update the statistics with a packet containing given number of bytes
+    /// Updates the statistics with a packet containing given number of bytes
+    ///
+    /// Sends summary of statistics if it is time to send them.
     fn update(&mut self, bytes: u64) {
         self.packets += 1;
         self.bytes += bytes;
@@ -59,8 +68,7 @@ impl Stats {
         }
     }
 
-    // produce string containing summary of statistics.
-    //  `when` is used to calculate duration for the statistics.
+    /// Returns [String] containing summary of statistics.
     fn summary(&self, when: Instant) -> String {
         let elapsed = when.duration_since(self.start);
         let pps = self.packets as f64 / elapsed.as_secs_f64();
@@ -78,15 +86,15 @@ impl Stats {
         )
     }
 
-    // reset the stats
+    /// Reset statistics
     fn reset(&mut self) {
         self.bytes = 0;
         self.packets = 0;
         self.start = Instant::now();
     }
 
-    // create Stats object which will send summary with given `period` to
-    // returned receiver.
+    /// Creates [Stats] which will send summary with given `period` to
+    /// returned receiver.
     pub fn periodic(period: Duration) -> (Stats, Receiver<String>) {
         let (sender, receiver) = mpsc::channel();
         (
@@ -106,12 +114,14 @@ impl Display for Stats {
     }
 }
 
-//Pipe can be used to process packets from packet iterator to output
+/// Pipe can be used to process packets from packet iterator to output
 pub struct Pipe {
+    /// Handle for writer thread.
     wr_handle: JoinHandle<Result<Stats>>,
 }
 
 impl Pipe {
+    /// Waits until packet processor thread for this [Pipe] has stopped.
     pub fn wait(self) -> Result<Stats> {
         let wr_stat = self.wr_handle.join().unwrap()?;
         tracing::trace!("Writer terminated, processed: {}", wr_stat);
@@ -119,7 +129,9 @@ impl Pipe {
     }
 }
 
-//Read packets from given input and send them using given Sender
+/// Reads packets from given input and sends them using given Sender
+///
+/// Given [Stats] are updated with statistics about processed packets.
 pub fn read_packets_to(
     input: impl Iterator<Item = Packet>,
     tx: &Tx,
@@ -138,16 +150,15 @@ pub fn read_packets_to(
     Ok(stats)
 }
 
-// delayer is used to determine how long to delay packet before sending it
+/// Delayer is used to determine how long to delay packet before sending it
 trait Delayer {
-    // initialize delayer
+    /// Initializes this delayer.
     fn init(&mut self);
-    // how long to wait before writing this packet
-    // None to write immediately
+    /// Returns how long to wait before writing given [Packet].
     fn wait_time_for(&mut self, pkt: &Packet) -> Option<Duration>;
 }
 
-//NoDelay is delayer which will cause every packet to be sent immediately
+/// [Delayer] which will cause every packet to be sent immediately
 struct NoDelay {}
 impl Delayer for NoDelay {
     fn init(&mut self) {}
@@ -157,6 +168,8 @@ impl Delayer for NoDelay {
     }
 }
 
+/// [Delayer] which will cause to write packets to be written with given
+/// bits per second speed.
 struct BpsDelay {
     start: Instant,
     bits_sent: u64,
@@ -164,6 +177,7 @@ struct BpsDelay {
 }
 
 impl BpsDelay {
+    /// Creates new [BpsDelay] with given speed (as in bits per second).
     fn new(bps: u64) -> Self {
         BpsDelay {
             start: Instant::now(),
@@ -190,6 +204,8 @@ impl Delayer for BpsDelay {
     }
 }
 
+/// [Delayer] which will cause to write packets to be written with given
+/// packets per second speed.
 struct PpsDelay {
     start: Instant,
     packets: u64,
@@ -197,6 +213,7 @@ struct PpsDelay {
 }
 
 impl PpsDelay {
+    /// Creates new [PpsDelay] with given speed (as in packets per second).
     fn new(pps: u32) -> Self {
         PpsDelay {
             start: Instant::now(),
@@ -230,11 +247,17 @@ impl Delayer for PpsDelay {
     }
 }
 
+/// [Delayer] which will delay packets according to delay on their original
+/// timestamps.
+///
+/// This [Delayer] can be used when reading packets from a pcap -file and
+/// it is desired to write them at the same speed as they were captured.
 struct PacketRateDelay {
     last_packet: Option<SystemTime>,
 }
 
 impl PacketRateDelay {
+    /// Returns new [PacketRateDelay]
     fn new() -> PacketRateDelay {
         PacketRateDelay { last_packet: None }
     }
@@ -252,6 +275,8 @@ impl Delayer for PacketRateDelay {
     }
 }
 
+/// Writes packets from `Rx` to `output` using `delay` to manage the speed
+/// in which packets are written.
 fn write_packets(
     rx: Rx,
     mut output: impl PacketWriter,
@@ -275,6 +300,7 @@ fn write_packets(
     Ok(stats)
 }
 
+/// Returns a [Pipe] writing packets from `rx` to `output` using `delayer`.
 fn create_pipe_for(
     rx: Rx,
     output: impl PacketWriter + Send + 'static,
@@ -287,20 +313,24 @@ fn create_pipe_for(
     Ok(Pipe { wr_handle })
 }
 
-// delaying creates a pipe writing packets from given Rx to given output. The
-// packets are written with original rate they were recorded.
+/// creates a pipe writing packets from `rx` to `output``.
+///
+/// The packets are written with original rate they were recorded.
 pub fn delaying(rx: Rx, output: impl PacketWriter + Send + 'static, stats: Stats) -> Result<Pipe> {
     create_pipe_for(rx, output, PacketRateDelay::new(), stats)
 }
 
-// fullspeed creates a pipe writing packets from given Rx to given output, the
-// packets are written out as fast as they are read with no delay between
+/// Creates a pipe writing packets from `rx` to `output`.
+///
+/// The packets are written out as fast as they are read with no delay between
 pub fn fullspeed(rx: Rx, output: impl PacketWriter + Send + 'static, stats: Stats) -> Result<Pipe> {
     create_pipe_for(rx, output, NoDelay {}, stats)
 }
 
-// pps creates a pipe writing packets at constant rate of given number of packets
-// per second.
+/// Creates a pipe writing packets from `rx` to `output`.
+///
+/// The packets are written at constant rate of given number of packets
+/// per second.
 pub fn pps(
     rx: Rx,
     output: impl PacketWriter + Send + 'static,
@@ -310,6 +340,10 @@ pub fn pps(
     create_pipe_for(rx, output, PpsDelay::new(pps), stats)
 }
 
+/// Creates a pipe writing packets from `rx` to `output`.
+///
+/// The packets are written at constant rate of given number of bits
+/// per second.
 pub fn bps(
     rx: Rx,
     output: impl PacketWriter + Send + 'static,
