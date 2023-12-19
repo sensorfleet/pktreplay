@@ -73,10 +73,9 @@ fn input_task(
     terminate: Arc<AtomicBool>,
     limit: Option<usize>,
 ) -> Result<()> {
-    let rd_handle: thread::JoinHandle<anyhow::Result<pipe::Stats>> = thread::Builder::new()
+    let rd_handle: thread::JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("pcap-reader".to_string())
         .spawn(move || {
-            let mut stats = Default::default();
             loop {
                 let inp = method.to_pcap_input()?;
                 let it = match limit {
@@ -84,13 +83,13 @@ fn input_task(
                         as Box<dyn Iterator<Item = input::Packet>>,
                     None => Box::new(inp.packets(&terminate)?),
                 };
-                stats = pipe::read_packets_to(it, &tx, stats)?;
+                pipe::read_packets_to(it, &tx)?;
                 if !loop_file || terminate.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
-                tracing::info!("pcap file iteration complete: {}", stats)
+                tracing::info!("pcap file iteration complete");
             }
-            Ok(stats)
+            Ok(())
         })
         .unwrap();
     rd_handle.join().unwrap()?;
