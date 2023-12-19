@@ -128,17 +128,12 @@ impl Pipe {
 /// Reads packets from given input and sends them using given Sender
 ///
 /// Given [Stats] are updated with statistics about processed packets.
-pub fn read_packets_to(
-    input: impl Iterator<Item = Packet>,
-    tx: &Tx,
-    mut stats: Stats,
-) -> Result<Stats> {
+pub fn read_packets_to(input: impl Iterator<Item = Packet>, tx: &Tx) -> Result<()> {
     for pkt in input {
-        stats.update(pkt.data.len() as u64);
         tx.write_packet(pkt)?;
     }
     tracing::info!("packet reader terminated");
-    Ok(stats)
+    Ok(())
 }
 
 /// Delayer is used to determine how long to delay packet before sending it
