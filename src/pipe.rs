@@ -285,7 +285,10 @@ fn write_packets(
             Ok(len) => {
                 stats.update(len as u64);
             }
-            Err(e) => tracing::warn!("Unable to write packet: {}", e),
+            Err(e) => {
+                tracing::error!("Unable to write packet: {}", e);
+                break;
+            }
         }
     }
     Ok(stats)
