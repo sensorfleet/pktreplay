@@ -80,12 +80,11 @@ fn input_task(
             loop {
                 let inp = method.to_pcap_input()?;
                 let it = match limit {
-                    Some(n) => {
-                        Box::new(inp.packets().take(n)) as Box<dyn Iterator<Item = input::Packet>>
-                    }
-                    None => Box::new(inp.packets()),
+                    Some(n) => Box::new(inp.packets(&terminate)?.take(n))
+                        as Box<dyn Iterator<Item = input::Packet>>,
+                    None => Box::new(inp.packets(&terminate)?),
                 };
-                stats = pipe::read_packets_to(it, &tx, stats, Arc::clone(&terminate))?;
+                stats = pipe::read_packets_to(it, &tx, stats)?;
                 if !loop_file || terminate.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
