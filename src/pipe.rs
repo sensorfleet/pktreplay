@@ -1,11 +1,7 @@
 //! Pipe can be used to write packets to outputs at given rate.
 use std::{
     fmt::Display,
-    sync::{
-        atomic::AtomicBool,
-        mpsc::{self, Receiver},
-        Arc,
-    },
+    sync::mpsc::{self, Receiver},
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime},
 };
@@ -136,17 +132,12 @@ pub fn read_packets_to(
     input: impl Iterator<Item = Packet>,
     tx: &Tx,
     mut stats: Stats,
-    terminate: Arc<AtomicBool>,
 ) -> Result<Stats> {
     for pkt in input {
         stats.update(pkt.data.len() as u64);
         tx.write_packet(pkt)?;
-        if terminate.load(std::sync::atomic::Ordering::Relaxed) {
-            tracing::error!("terminated!");
-            break;
-        }
     }
-
+    tracing::info!("packet reader terminated");
     Ok(stats)
 }
 

@@ -246,12 +246,12 @@ checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 [[package]]
 name = "luomu-common"
 version = "0.1.0"
-source = "git+https://github.com/sensorfu/luomu-libpcap?rev=e9688270930229d77a1d6f4f34a8e45f43a31e42#e9688270930229d77a1d6f4f34a8e45f43a31e42"
+source = "git+https://github.com/sensorfu/luomu-libpcap?rev=5148d4ff0ab687c564e65bf9dbccb82388cb6d09#5148d4ff0ab687c564e65bf9dbccb82388cb6d09"
 
 [[package]]
 name = "luomu-libpcap"
 version = "0.1.0"
-source = "git+https://github.com/sensorfu/luomu-libpcap?rev=e9688270930229d77a1d6f4f34a8e45f43a31e42#e9688270930229d77a1d6f4f34a8e45f43a31e42"
+source = "git+https://github.com/sensorfu/luomu-libpcap?rev=5148d4ff0ab687c564e65bf9dbccb82388cb6d09#5148d4ff0ab687c564e65bf9dbccb82388cb6d09"
 dependencies = [
  "libc",
  "log",
@@ -262,7 +262,7 @@ dependencies = [
 [[package]]
 name = "luomu-libpcap-sys"
 version = "0.1.0"
-source = "git+https://github.com/sensorfu/luomu-libpcap?rev=e9688270930229d77a1d6f4f34a8e45f43a31e42#e9688270930229d77a1d6f4f34a8e45f43a31e42"
+source = "git+https://github.com/sensorfu/luomu-libpcap?rev=5148d4ff0ab687c564e65bf9dbccb82388cb6d09#5148d4ff0ab687c564e65bf9dbccb82388cb6d09"
 dependencies = [
  "cc",
  "libc",
