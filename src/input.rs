@@ -63,7 +63,10 @@ impl Iterator for TimeoutIter<'_, '_> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match self.iter.next() {
-                Some(Err(_)) => return None,
+                Some(Err(err)) => {
+                    tracing::error!("Error while reading packets: {}", err);
+                    return None;
+                }
                 Some(Ok(pkt)) => {
                     return Some(Packet {
                         when: pkt.timestamp(),

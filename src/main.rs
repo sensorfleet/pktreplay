@@ -72,7 +72,7 @@ fn input_task(
     tx: channel::Tx,
     terminate: Arc<AtomicBool>,
     limit: Option<usize>,
-) -> Result<()> {
+) {
     let rd_handle: thread::JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("pcap-reader".to_string())
         .spawn(move || {
@@ -92,12 +92,14 @@ fn input_task(
             Ok(())
         })
         .unwrap();
-    rd_handle.join().unwrap()?;
+    if let Err(err) = rd_handle.join().unwrap() {
+        tracing::error!("Error while reading packets: {}", err)
+    }
     tracing::trace!("Reader terminated");
-
-    let s = pipe.wait()?;
-    println!("Write complete: {}", s);
-    Ok(())
+    match pipe.wait() {
+        Ok(stats) => println!("Write complete: {}", stats),
+        Err(err) => tracing::error!("Error while writing packets: {}", err),
+    }
 }
 
 /// Creates a [pipe::Pipe] with given parameters.
@@ -241,11 +243,7 @@ fn main() {
     };
 
     match p {
-        Ok(pipe) => {
-            if let Err(e) = input_task(method, params.looping, pipe, tx, terminate, params.count) {
-                tracing::error!("Error while processing packets: {}", e);
-            }
-        }
+        Ok(pipe) => input_task(method, params.looping, pipe, tx, terminate, params.count),
         Err(e) => tracing::error!("{}", e),
     }
     // wait for stat printer to terminate
