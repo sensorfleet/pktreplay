@@ -83,6 +83,19 @@ impl IntoIterator for Rx {
     }
 }
 
+impl Drop for Rx {
+    fn drop(&mut self) {
+        let (mux, cvar) = &*self.ctx;
+        let mut ctx = mux.lock().unwrap();
+        // ensure any sender will not be paused anymore.
+        ctx.packets = 0;
+        if ctx.paused {
+            ctx.paused = false;
+            cvar.notify_all();
+        }
+    }
+}
+
 /// Sender side of channel
 pub struct Tx {
     sender: Sender<Packet>,
