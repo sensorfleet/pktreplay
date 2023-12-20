@@ -1,5 +1,5 @@
 use anyhow::Result;
-use signal_hook::consts::SIGINT;
+use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::flag;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
@@ -72,7 +72,7 @@ fn input_task(
     tx: channel::Tx,
     terminate: Arc<AtomicBool>,
     limit: Option<usize>,
-) {
+) -> i32 {
     let rd_handle: thread::JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("pcap-reader".to_string())
         .spawn(move || {
@@ -92,14 +92,20 @@ fn input_task(
             Ok(())
         })
         .unwrap();
+    let mut ret = 0;
     if let Err(err) = rd_handle.join().unwrap() {
-        tracing::error!("Error while reading packets: {}", err)
+        tracing::error!("Error while reading packets: {}", err);
+        ret = -1;
     }
     tracing::trace!("Reader terminated");
     match pipe.wait() {
         Ok(stats) => println!("Write complete: {}", stats),
-        Err(err) => tracing::error!("Error while writing packets: {}", err),
+        Err(err) => {
+            tracing::error!("Error while writing packets: {}", err);
+            ret = -1
+        }
     }
+    ret
 }
 
 /// Creates a [pipe::Pipe] with given parameters.
@@ -211,13 +217,17 @@ fn main() {
     let ch_low = params.low.unwrap_or(ch_hi / 2);
     if ch_low >= ch_hi {
         tracing::error!("packet buffer low watermark can not be larger than high");
-        return;
+        std::process::exit(-1);
     }
 
     let terminate = Arc::new(AtomicBool::from(false));
     if let Err(e) = flag::register(SIGINT, Arc::clone(&terminate)) {
         tracing::error!("Unable to register signal handler: {e}");
-        return;
+        std::process::exit(-1);
+    }
+    if let Err(e) = flag::register(SIGTERM, Arc::clone(&terminate)) {
+        tracing::error!("Unable to register signal handler: {e}");
+        std::process::exit(-1);
     }
 
     if matches!(method, InputMethod::Interface(_)) && matches!(rate, Rate::Delayed) {
@@ -242,12 +252,16 @@ fn main() {
         output::sink().and_then(|o| create_pipe(rate, rx, o, stats))
     };
 
-    match p {
+    let ret = match p {
         Ok(pipe) => input_task(method, params.looping, pipe, tx, terminate, params.count),
-        Err(e) => tracing::error!("{}", e),
-    }
+        Err(e) => {
+            tracing::error!("{}", e);
+            -1
+        }
+    };
     // wait for stat printer to terminate
     if let Some(handle) = stat_printer {
         handle.join().unwrap();
     }
+    std::process::exit(ret);
 }
