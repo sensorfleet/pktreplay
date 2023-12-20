@@ -19,6 +19,8 @@ pub struct Stats {
     packets: u64,
     /// Number of bytes processed since start or last reset.
     bytes: u64,
+    /// Number of packets which we were not able to send.
+    invalid: u64,
     /// When packet processing has started.
     start: Instant,
     /// Interval for producing stats
@@ -36,6 +38,7 @@ impl Default for Stats {
             last_stat: Instant::now(),
             packets: Default::default(),
             bytes: Default::default(),
+            invalid: Default::default(),
             sender: None,
             interval: None,
         }
@@ -43,11 +46,17 @@ impl Default for Stats {
 }
 
 impl Stats {
-    /// Updates the statistics with a packet containing given number of bytes
+    /// Updates the statistics with a packet containing given number of bytes.
+    /// If `bytes` is 0, this is to indicate that packet was not sent and
+    /// should increase the "invalid" packet count.
     ///
     /// Sends summary of statistics if it is time to send them.
     fn update(&mut self, bytes: u64) {
-        self.packets += 1;
+        if bytes == 0 {
+            self.invalid += 1
+        } else {
+            self.packets += 1;
+        }
         self.bytes += bytes;
         if let Some(val) = self.interval {
             if self.last_stat.elapsed() > val {
@@ -71,9 +80,14 @@ impl Stats {
         let bps = (self.bytes as f64 * 8_f64) / elapsed.as_secs_f64();
         let mbps = (self.bytes as f64 / (1024 * 1024) as f64) / elapsed.as_secs_f64();
 
+        let packet_count = match self.invalid {
+            0 => format!("{} packets", self.packets),
+            _ => format!("{} packets ({} not sent)", self.packets, self.invalid),
+        };
+
         format!(
-            "{} packets, {} bytes in {}ms / {:.3}pps, {:.3}bps ({:.3} MBps)",
-            self.packets,
+            "{}, {} bytes in {}ms / {:.3}pps, {:.3}bps ({:.3} MBps)",
+            packet_count,
             self.bytes,
             elapsed.as_millis(),
             pps,
@@ -86,6 +100,7 @@ impl Stats {
     fn reset(&mut self) {
         self.bytes = 0;
         self.packets = 0;
+        self.invalid = 0;
         self.start = Instant::now();
     }
 

@@ -38,7 +38,28 @@ struct Interface(Pcap);
 
 impl PacketWriter for Interface {
     fn write_raw(&mut self, buf: &[u8]) -> Result<usize> {
-        Ok(self.0.inject(buf)?)
+        match self.0.inject(buf) {
+            Ok(ret) => Ok(ret),
+            Err(err) => {
+                tracing::warn!(?err, len = ?buf.len(), "error while trying to write");
+                // we do not want to stop writing if we get error indicating that
+                // packet was too large to write.
+                if let luomu_libpcap::Error::PcapError(ref msg) = err {
+                    if msg.contains("Message too") && buf.len() > 1500 {
+                        // this is a stupid way to detect such errors, but there
+                        // is no other way currently, as the only thing we get
+                        // is error message from libpcap and it can contain at
+                        // least "Message too long" and "Message too large"
+                        // depending on the Linux distribution of choice.
+                        Ok(0)
+                    } else {
+                        Err(err.into())
+                    }
+                } else {
+                    Err(err.into())
+                }
+            }
+        }
     }
 }
 
