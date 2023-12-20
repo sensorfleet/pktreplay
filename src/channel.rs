@@ -2,6 +2,7 @@
 use std::{
     fmt::Display,
     sync::{
+        atomic::AtomicBool,
         mpsc::{self, Receiver, SendError, Sender},
         Arc, Condvar, Mutex,
     },
@@ -45,6 +46,7 @@ pub struct Rx {
     recv: Receiver<Packet>,
     ctx: Arc<(Mutex<ChannelContext>, Condvar)>,
     watermark_lo: u64,
+    stop: Arc<AtomicBool>,
 }
 
 /// Iterator for reading packets.
@@ -57,6 +59,9 @@ impl Iterator for IntoRxIter {
     type Item = Packet;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.rx.stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
         let (mux, cvar) = &*self.rx.ctx;
         let packet = self.rx.recv.recv().ok();
         if packet.is_some() {
@@ -126,12 +131,13 @@ impl Tx {
 }
 
 /// Creates a channel, returning [Tx] and [Rx] for a channel that allows
-/// `hi` number of packets to be queued.
+/// `hi` number of packets to be queued. `stop` can be used to signal that
+/// [Rx] should terminate immediately instead of draining the buffer.
 ///
 /// When hi number of packets are queued, the [Tx::write_packet()] will
 /// block until packets are consumed from channel and only `lo` number of
 /// packets are left.
-pub fn create(hi: u64, lo: u64) -> (Tx, Rx) {
+pub fn create(hi: u64, lo: u64, stop: Arc<AtomicBool>) -> (Tx, Rx) {
     let (sender, recv) = mpsc::channel();
     let ctx = Arc::new((
         Mutex::new(ChannelContext {
@@ -151,6 +157,7 @@ pub fn create(hi: u64, lo: u64) -> (Tx, Rx) {
             recv,
             ctx: ctx2,
             watermark_lo: lo,
+            stop,
         },
     )
 }

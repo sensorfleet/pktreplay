@@ -73,18 +73,19 @@ fn input_task(
     terminate: Arc<AtomicBool>,
     limit: Option<usize>,
 ) -> i32 {
+    let stop = terminate.clone();
     let rd_handle: thread::JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("pcap-reader".to_string())
         .spawn(move || {
             loop {
                 let inp = method.to_pcap_input()?;
                 let it = match limit {
-                    Some(n) => Box::new(inp.packets(&terminate)?.take(n))
+                    Some(n) => Box::new(inp.packets(&stop)?.take(n))
                         as Box<dyn Iterator<Item = input::Packet>>,
-                    None => Box::new(inp.packets(&terminate)?),
+                    None => Box::new(inp.packets(&stop)?),
                 };
                 pipe::read_packets_to(it, &tx)?;
-                if !loop_file || terminate.load(std::sync::atomic::Ordering::Relaxed) {
+                if !loop_file || stop.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
                 tracing::info!("pcap file iteration complete");
@@ -94,8 +95,13 @@ fn input_task(
         .unwrap();
     let mut ret = 0;
     if let Err(err) = rd_handle.join().unwrap() {
-        tracing::error!("Error while reading packets: {}", err);
-        ret = -1;
+        // if we have received signal indicating we should stop, discard
+        // reader errors as the packet writer might have terminated
+        // already and reader just complains about closed channel.
+        if !terminate.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::error!("Error while reading packets: {}", err);
+            ret = -1;
+        }
     }
     tracing::trace!("Reader terminated");
     match pipe.wait() {
@@ -238,7 +244,7 @@ fn main() {
         rate = Rate::Full;
     }
 
-    let (tx, rx) = channel::create(ch_hi, ch_low);
+    let (tx, rx) = channel::create(ch_hi, ch_low, terminate.clone());
     let stat_period = params.stats.map(Duration::from_secs);
     let (stats, stat_printer) = if let Some(period) = stat_period {
         let (s, r) = pipe::Stats::periodic(period);
