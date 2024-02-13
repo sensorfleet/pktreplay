@@ -77,8 +77,34 @@ fn input_task(
     let rd_handle: thread::JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("pcap-reader".to_string())
         .spawn(move || {
+            // set this to true if we are looping and have been able to read
+            // the file at least once.
+            let mut opened: bool = false;
             loop {
-                let inp = method.to_pcap_input()?;
+                let input = match method.to_pcap_input() {
+                    Ok(input) => {
+                        if loop_file {
+                            opened = true
+                        }
+                        Some(input)
+                    }
+                    Err(err) => {
+                        if loop_file && opened {
+                            // we have been able to open this file at least
+                            // once, thus just terminate the looping if
+                            // file has been removed
+                            tracing::info!(?err, "looping and file removed?, terminating");
+                            None
+                        } else {
+                            return Err(err);
+                        }
+                    }
+                };
+                let Some(inp) = input else {
+                    // Input not opened, but do not return error
+                    break;
+                };
+
                 let it = match limit {
                     Some(n) => Box::new(inp.packets(&stop)?.take(n))
                         as Box<dyn Iterator<Item = input::Packet>>,
