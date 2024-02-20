@@ -1,0 +1,5 @@
+0.1.1 (2024-02-20)
+        * Do not print any error messages if .pcap file has been removed while
+          looping, just terminate if file can not be opened anymore.
+0.1.0 (2023-12-21)
+        * Initial release
