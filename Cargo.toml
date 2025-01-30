@@ -9,9 +9,9 @@ repository = "https://github.com/sensorfleet/pktreplay"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-luomu-libpcap = {git= "https://github.com/sensorfu/luomu-libpcap", rev="5148d4ff0ab687c564e65bf9dbccb82388cb6d09"}
+luomu-libpcap = {git= "https://github.com/sensorfu/luomu-libpcap", rev="1184f4e5b4e9cedd2a6fdaf4ed0401f371ace8f4"}
 anyhow = { version = "1"}
-clap = {version="4.4", features=["derive"]}
+clap = {version="4.5", features=["derive"]}
 signal-hook = {version="^0.3"}
 tracing = "0.1"
 tracing-subscriber = {version="0.3", features=["env-filter"]}
